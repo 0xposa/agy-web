@@ -1,0 +1,2 @@
+var e=`<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" viewBox="0 0 16 16"><path fill="#2196f3" d="m5 15 8-8H9l2-6-8 8h4z"/></svg>`;export{e as default};
+//# sourceMappingURL=stackblitz-CYXBL3VS.js.map

@@ -1,0 +1,2 @@
+import{h as e}from"./solid-DUKfQK8j.js";import{c as t}from"./gui-DanNl1-g.js";function n(){let n=t(),r=n.ui,i=n.stores.mobileDiff;return e(r.SettingsRow,{id:`settings-mobile-diff-wrap`,get title(){return n.t(`settings.wrapLines.title`)},get description(){return n.t(`settings.wrapLines.description`)},get children(){return e(r.Switch,{get label(){return n.t(`settings.wrapLines.title`)},hideLabel:!0,get checked(){return i.value.wrap},onChange:e=>i.update(t=>{t.wrap=e})})}})}export{n as default};
+//# sourceMappingURL=settings-CaBJMTh6.js.map

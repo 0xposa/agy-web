@@ -1,0 +1,2 @@
+import{l as e,o as t,u as n}from"./IUDOOOVD-Ogvy-MEU.js";function r(r,i,a,o,s,c,l){let u=t(r,!1,i,a,4e3,1);if(u.height===0)return{width:s,height:c,content:l};let d=u.height+12,f=Math.max(s,Math.ceil(u.width+2*o));return{width:f,height:Math.ceil(c+d),content:e(u,f/2,o+u.height/2,` class="pele-title" font-weight="var(--_tw)"`)+`<g transform="translate(${n((f-s)/2)},${n(d)})">${l}</g>`}}export{r as t};
+//# sourceMappingURL=VCEB3UVF-5FRFXt7I.js.map

@@ -1,0 +1,329 @@
+#!/usr/bin/env node
+/**
+ * agy-web / agy web CLI
+ * Launch and pair Antigravity Web UI (localhost & LAN with QR code)
+ */
+
+const http = require("http");
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
+const { spawn, execSync } = require("child_process");
+const { renderTerminalQR } = require("../qr.js");
+
+const ROOT_DIR = path.resolve(__dirname, "..");
+const SERVER_JS = path.join(ROOT_DIR, "server.js");
+const STATE_FILE = path.join(ROOT_DIR, ".agy-web-state.json");
+const SECRET_JSON = "/root/.agy-web-data/secret.json";
+const LOG_FILE = path.join(ROOT_DIR, "agy-web.log");
+
+const DEFAULT_PORT = Number(process.env.AGY_WEB_PORT || 49375);
+
+function getServicePassword() {
+  try {
+    if (fs.existsSync(SECRET_JSON)) {
+      const data = JSON.parse(fs.readFileSync(SECRET_JSON, "utf8"));
+      if (data.password) return data.password;
+    }
+  } catch {}
+  return "";
+}
+
+function getLanIps() {
+  const ips = [];
+  const nets = os.networkInterfaces();
+  for (const name of Object.keys(nets)) {
+    for (const net of nets[name] || []) {
+      if (net.family === "IPv4" && !net.internal) {
+        ips.push(net.address);
+      }
+    }
+  }
+  return ips;
+}
+
+function checkServerAlive(port) {
+  return new Promise((resolve) => {
+    const pwd = getServicePassword();
+    const auth = Buffer.from(`opencode:${pwd}`).toString("base64");
+    const req = http.get(
+      {
+        hostname: "127.0.0.1",
+        port,
+        path: "/api/info",
+        headers: { Authorization: `Basic ${auth}` },
+        timeout: 1500,
+      },
+      (res) => {
+        res.resume();
+        resolve(res.statusCode === 200 || res.statusCode === 503);
+      }
+    );
+    req.on("error", () => resolve(false));
+    req.on("timeout", () => {
+      req.destroy();
+      resolve(false);
+    });
+  });
+}
+
+function requestPairingCode(port) {
+  return new Promise((resolve, reject) => {
+    const pwd = getServicePassword();
+    const auth = Buffer.from(`opencode:${pwd}`).toString("base64");
+    const req = http.request(
+      {
+        hostname: "127.0.0.1",
+        port,
+        path: "/api/pair",
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${auth}`,
+          "Content-Type": "application/json",
+        },
+        timeout: 4000,
+      },
+      (res) => {
+        let chunks = [];
+        res.on("data", (d) => chunks.push(d));
+        res.on("end", () => {
+          const body = Buffer.concat(chunks).toString("utf8");
+          if (res.statusCode !== 200) {
+            return reject(new Error(`Server returned HTTP ${res.statusCode}: ${body}`));
+          }
+          try {
+            resolve(JSON.parse(body));
+          } catch (e) {
+            reject(e);
+          }
+        });
+      }
+    );
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+async function ensureServerStarted(port) {
+  if (await checkServerAlive(port)) return true;
+
+  const outFd = fs.openSync(LOG_FILE, "a");
+  const child = spawn(process.execPath, [SERVER_JS], {
+    cwd: ROOT_DIR,
+    env: { ...process.env, AGY_WEB_PORT: String(port) },
+    detached: true,
+    stdio: ["ignore", outFd, outFd],
+  });
+  child.unref();
+
+  for (let i = 0; i < 60; i++) {
+    await new Promise((r) => setTimeout(r, 250));
+    if (await checkServerAlive(port)) return true;
+  }
+  return false;
+}
+
+function stopServer() {
+  let stopped = false;
+  try {
+    if (fs.existsSync(STATE_FILE)) {
+      const st = JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
+      if (st.pid) {
+        try { process.kill(st.pid, "SIGKILL"); } catch {}
+        stopped = true;
+      }
+      fs.unlinkSync(STATE_FILE);
+    }
+  } catch {}
+  try {
+    const out = execSync("ps aux", { encoding: "utf8" });
+    for (const line of out.split("\n")) {
+      if (line.includes("bash ") || line.includes("sh -c") || line.includes("node -e")) continue;
+      if (line.includes("/agy-web/server.js") || line.includes("opencode serve --port 49373") || line.includes("agy.bin --print=")) {
+        const parts = line.trim().split(/\s+/);
+        const pid = Number(parts[1]);
+        if (pid && pid !== process.pid && pid !== process.ppid) {
+          try { process.kill(pid, "SIGKILL"); stopped = true; } catch {}
+        }
+      }
+    }
+  } catch {}
+  return stopped;
+}
+
+function printHelp() {
+  console.log(`DESCRIPTION
+  Antigravity Web UI & Pairing Server (agy web / agy-web)
+
+USAGE
+  agy web [subcommand] [flags]
+  agy-web [subcommand] [flags]
+
+SUBCOMMANDS
+  pair        Generate one-time pairing link & QR code (default)
+  start       Start the Antigravity Web background server
+  stop        Stop the Antigravity Web background server
+  restart     Restart the Antigravity Web background server
+  status      Show server status and active URLs
+  password    Show server authentication password
+  open        Generate pairing link and open it in the browser
+  serve       Run the server in the foreground
+
+FLAGS
+  --port <number>    Port to run Antigravity Web on (default: ${DEFAULT_PORT})
+  --url <string>     Use a custom external HTTP(S) URL in pairing links
+  --open, -o         Open the one-time pairing link automatically in browser
+  --no-qr            Do not print the terminal QR code
+  --help, -h         Show this help message
+`);
+}
+
+async function main() {
+  const args = process.argv.slice(2);
+  let subcmd = "pair";
+  let port = DEFAULT_PORT;
+  let customUrl = "";
+  let autoOpen = false;
+  let showQr = true;
+
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "--help" || a === "-h" || a === "help") {
+      printHelp();
+      return;
+    } else if (a === "--port" || a === "-p") {
+      port = Number(args[++i] || DEFAULT_PORT);
+    } else if (a.startsWith("--port=")) {
+      port = Number(a.slice(7));
+    } else if (a === "--url") {
+      customUrl = args[++i] || "";
+    } else if (a.startsWith("--url=")) {
+      customUrl = a.slice(6);
+    } else if (a === "--open" || a === "-o") {
+      autoOpen = true;
+    } else if (a === "--no-qr") {
+      showQr = false;
+    } else if (!a.startsWith("-")) {
+      subcmd = a;
+    }
+  }
+
+  if (subcmd === "serve") {
+    process.env.AGY_WEB_PORT = String(port);
+    require(SERVER_JS);
+    return;
+  }
+
+  if (subcmd === "stop") {
+    stopServer();
+    console.log("  Antigravity Web server stopped.");
+    return;
+  }
+
+  if (subcmd === "restart") {
+    stopServer();
+    await new Promise((r) => setTimeout(r, 400));
+    const ok = await ensureServerStarted(port);
+    console.log(
+      ok
+        ? `  Antigravity Web server restarted on http://127.0.0.1:${port}`
+        : "  Failed to restart Antigravity Web server."
+    );
+    return;
+  }
+
+  if (subcmd === "password") {
+    console.log(getServicePassword());
+    return;
+  }
+
+  if (subcmd === "status") {
+    const alive = await checkServerAlive(port);
+    if (!alive) {
+      console.log(`  Status: stopped (port ${port})`);
+      return;
+    }
+    let pidInfo = "";
+    try {
+      const st = JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
+      if (st.pid) pidInfo = ` (PID ${st.pid})`;
+    } catch {}
+    console.log(`  Status: running${pidInfo}`);
+    console.log(`  Web UI: http://127.0.0.1:${port}`);
+    for (const ip of getLanIps()) {
+      console.log(`  LAN UI: http://${ip}:${port}`);
+    }
+    return;
+  }
+
+  if (subcmd === "start") {
+    const ok = await ensureServerStarted(port);
+    if (!ok) {
+      console.error("  Error: Could not start Antigravity Web server.");
+      process.exit(1);
+    }
+    console.log(`  Antigravity Web server is running on http://127.0.0.1:${port}`);
+    return;
+  }
+
+  if (subcmd === "open") {
+    autoOpen = true;
+    subcmd = "pair";
+  }
+
+  // Default: pair
+  const ok = await ensureServerStarted(port);
+  if (!ok) {
+    console.error("  Error: Antigravity Web server could not be started.");
+    process.exit(1);
+  }
+
+  const pairData = await requestPairingCode(port);
+  const mins = Math.round((pairData.expires_in || 300) / 60);
+  const lanIps = getLanIps();
+
+  const baseUrls = customUrl
+    ? [customUrl.replace(/\/+$/, "")]
+    : [`http://127.0.0.1:${port}`, ...lanIps.map((ip) => `http://${ip}:${port}`)];
+
+  const links = baseUrls.map((u) => `${u}/auth/connect/${pairData.code}`);
+
+  console.log("");
+  console.log(`  \x1b[1;36mAntigravity Web (AGY-CODE)\x1b[0m — Open a link to connect.`);
+  console.log(`  Links work once and expire in ${mins} minutes.`);
+  console.log("");
+  for (const link of links) {
+    console.log(`  \x1b[1;32m${link}\x1b[0m`);
+  }
+
+  if (showQr) {
+    const qrTarget = customUrl
+      ? links[0]
+      : lanIps.length > 0
+      ? JSON.stringify({ code: pairData.code, urls: baseUrls })
+      : links[0];
+    try {
+      const qr = renderTerminalQR(qrTarget, { border: 2 })
+        .split("\n")
+        .map((line) => "  " + line)
+        .join("\n");
+      console.log("\n" + qr);
+    } catch {}
+  }
+
+  console.log("");
+  console.log("  Over SSH? Forward the port, then open the link on your machine:");
+  console.log(`  ssh -L ${port}:127.0.0.1:${port} <host>`);
+  console.log("");
+
+  if (autoOpen && links[0]) {
+    try {
+      spawn("xdg-open", [links[0]], { detached: true, stdio: "ignore" }).unref();
+    } catch {}
+  }
+}
+
+main().catch((err) => {
+  console.error("  Error:", err.message || err);
+  process.exit(1);
+});

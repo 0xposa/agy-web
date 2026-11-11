@@ -1,0 +1,13 @@
+{
+  "name": "agy-web",
+  "version": "1.0.0",
+  "description": "Antigravity Web UI & Pairing Server (Adapted from OpenCode v2 Web Architecture)",
+  "main": "server.js",
+  "bin": {
+    "agy-web": "./bin/agy-web"
+  },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,2 @@
+import{j as e,z as t}from"./solid-DUKfQK8j.js";import{_ as n,m as r}from"./web-DUYGs8yw.js";var i=n(`<div>`);function a(n){let[a,o]=t(n,[`class`,`classList`]);return(()=>{var t=i();return r(t,e(o,{role:`separator`,"aria-orientation":`horizontal`,"data-component":`divider-v2`,get classList(){return{...a.classList,[a.class??``]:!!a.class}}}),!1,!1),t})()}export{a as t};
+//# sourceMappingURL=divider-C06pwMas.js.map
